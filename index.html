@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VIME Playground</title>
+
+    <link rel="stylesheet" href="./style.css">
+</head>
+
+<body>
+    <main>
+        <h1>VIME Playground</h1>
+        <p>Vietnamese Input Method Engine</p>
+
+        <label for="method">Kiểu gõ</label>
+        <select id="method">
+            <option value="vi-vni">VNI</option>
+            <option value="vi-telex">Telex</option>
+            <option value="vi-viqr">VIQR</option>
+            <option value="vi-viqr-star">VIQR*</option>
+            <option value="vi-vni-reformed">
+                VNI (đặt dấu kiểu mới)
+            </option>
+            <option value="vi-telex-reformed">
+                Telex (đặt dấu kiểu mới)
+            </option>
+            <option value="vi-viqr-reformed">
+                VIQR (đặt dấu kiểu mới)
+            </option>
+            <option value="vi-viqr-star-reformed">
+                VIQR* (đặt dấu kiểu mới)
+            </option>
+        </select>
+
+        <label for="editor">Gõ thử</label>
+        <textarea
+            id="editor"
+            rows="12"
+            autofocus
+            placeholder="Gõ tiếng Việt ở đây…"
+        ></textarea>
+
+        <p>Ví dụ:</p>
+
+        <ul>
+            <li>
+                <strong>VNI</strong> <code>tie6ng1 Vie6t5</code> → <code>tiếng Việt</code>;
+            </li>
+            <li>
+                <strong>Telex</strong> <code>tieengs Vieetj</code> → <code>tiếng Việt</code>;
+            </li>
+            <li>
+                <strong>VIQR</strong> <code>tie^'ng Vie^.t</code> → <code>tiếng Việt</code>.
+            </li>
+        </ul>
+    </main>
+
+    <script src="./vendor/jquery.min.js"></script>
+    <script src="./vendor/jquery.ime.js"></script>
+    <script src="./vendor/jquery.ime.preferences.js"></script>
+    <script src="./vendor/vi.js"></script>
+    <script src="./app.js"></script>
+</body>
+</html>

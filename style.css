@@ -1,0 +1,75 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family:
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    color: #202122;
+    background: #f8f9fa;
+}
+
+main {
+    width: min(800px, calc(100% - 32px));
+    margin: 48px auto;
+}
+
+h1 {
+    margin-bottom: 4px;
+}
+
+label {
+    display: block;
+    margin-top: 24px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+select,
+textarea {
+    width: 100%;
+    font: inherit;
+    border: 1px solid #a2a9b1;
+    border-radius: 4px;
+    background: white;
+}
+
+select {
+    padding: 8px 40px 8px 12px;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path d='M4 6l4 4 4-4' fill='none' stroke='%23202122' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px 16px;
+}
+
+textarea {
+    padding: 12px;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+textarea:focus,
+select:focus {
+    outline: 2px solid #36c;
+    outline-offset: 2px;
+}
+
+p,
+ul {
+    color: #54595d;
+}
+
+ul {
+    line-height: 1.6;
+    padding-inline-start: 16px;
+}
+
+code {
+    font-family: ui-monospace, monospace;
+}
