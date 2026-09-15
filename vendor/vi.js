@@ -2,6 +2,7 @@
 	'use strict';
 
 	var DEFAULT_CONTEXT_LENGTH = 0,
+		TELEX_QUICK_CONTEXT_LENGTH = 2,
 		DEFAULT_MAX_KEY_LENGTH = 16,
 		COMBINING_ACUTE = '\u0301',
 		COMBINING_GRAVE = '\u0300',
@@ -94,6 +95,14 @@
 		};
 	}
 
+	function getTelexQuickWOutput( key ) {
+		return key === 'W' ? 'Ư' : 'ư';
+	}
+
+	function getTelexQuickWLiteralOutput( key ) {
+		return key === 'W' ? 'W' : 'w';
+	}
+
 	// Input method command decoders.
 
 	/**
@@ -136,16 +145,46 @@
 		return null;
 	}
 
-	/**
-	 * Decode a Telex key sequence into a shared Vietnamese semantic command.
-	 *
-	 * @param {string} input Text window ending with the latest typed key.
-	 * @param {string} context Raw jQuery.IME key context.
-	 * @param {Object} [options] Adapter options.
-	 * @param {string} [options.tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
-	 */
-	function decodeTelexCommand( input, context, options ) {
+	function createVowelDiacriticCommandWithFallback( key, vowelDiacritic, fallbackLiteralOutput ) {
+		var decoded = createVowelDiacriticCommand( key, vowelDiacritic );
+
+		decoded.fallbackLiteralOutput = fallbackLiteralOutput;
+		return decoded;
+	}
+
+	function getTelexQuickWRepeatCommandKey( input, key, context ) {
+		var sourcePair = context.slice( -2 ).toLowerCase(),
+			previousOutput = input.slice( -2, -1 );
+
+		if (
+			key.toLowerCase() !== 'w' ||
+			context.slice( -1 ).toLowerCase() !== 'w' ||
+			sourcePair === 'aw' ||
+			sourcePair === 'ow' ||
+			sourcePair === 'uw'
+		) {
+			return null;
+		}
+
+		if ( previousOutput === 'ư' || previousOutput === 'Ư' ) {
+			return previousOutput + key;
+		}
+
+		return null;
+	}
+
+	function candidateCanUseTelexQuickW( input, commandKey, tonePlacement ) {
+		var state = parseExtractedCandidate( input, commandKey, tonePlacement );
+
+		if ( !state ) {
+			return true;
+		}
+
+		return state.status !== Vietnamese.StateType.UNRECOGNIZED &&
+			state.structure.vowels.indices.length === 0;
+	}
+
+	function decodeTelexCommandWithOptions( input, context, options, telexOptions ) {
 		var toneCommands = {
 				s: Vietnamese.Tone.ACUTE,
 				f: Vietnamese.Tone.GRAVE,
@@ -180,6 +219,8 @@
 			key = input.slice( -1 ),
 			lowerKey = key.toLowerCase(),
 			tonePlacement = options && options.tonePlacement,
+			quickW = telexOptions && telexOptions.quickW,
+			quickWRepeatCommandKey,
 			vowelDiacriticCommand = repeatedVowelDiacriticCommands[ lowerInput.slice( -2 ) ],
 			delayedCommand = delayedVowelDiacriticCommands[ lowerKey ];
 
@@ -237,10 +278,62 @@
 		}
 
 		if ( lowerKey === 'w' ) {
+			if ( quickW ) {
+				quickWRepeatCommandKey = getTelexQuickWRepeatCommandKey( input, key, context );
+				if ( quickWRepeatCommandKey ) {
+					return createLiteralOutputCommand(
+						quickWRepeatCommandKey,
+						getTelexQuickWLiteralOutput( key )
+					);
+				}
+
+				if ( candidateCanUseTelexQuickW( input, key, tonePlacement ) ) {
+					return createVowelDiacriticCommandWithFallback(
+						key,
+						Vietnamese.VowelDiacritic.HORN,
+						getTelexQuickWOutput( key )
+					);
+				}
+			}
+
 			return createVowelDiacriticCommand( key, Vietnamese.VowelDiacritic.HORN );
 		}
 
 		return null;
+	}
+
+	/**
+	 * Decode a Telex key sequence into a shared Vietnamese semantic command.
+	 *
+	 * This profile supports the common quick `w` key as literal `ư` when the
+	 * current candidate cannot otherwise receive a Telex `w` command.
+	 *
+	 * @param {string} input Text window ending with the latest typed key.
+	 * @param {string} context Raw jQuery.IME key context.
+	 * @param {Object} [options] Adapter options.
+	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 */
+	function decodeTelexCommand( input, context, options ) {
+		return decodeTelexCommandWithOptions( input, context, options, {
+			quickW: true
+		} );
+	}
+
+	/**
+	 * Decode a Simple Telex key sequence.
+	 *
+	 * Simple Telex keeps standalone `w` literal and only applies `w` when the
+	 * current candidate can receive breve or horn through the shared engine.
+	 *
+	 * @param {string} input Text window ending with the latest typed key.
+	 * @param {string} context Raw jQuery.IME key context.
+	 * @param {Object} [options] Adapter options.
+	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 */
+	function decodeSimpleTelexCommand( input, context, options ) {
+		return decodeTelexCommandWithOptions( input, context, options, {
+			quickW: false
+		} );
 	}
 
 	/**
@@ -822,32 +915,9 @@
 
 	function getOnsets() {
 		return [
-			'ngh',
-			'ch',
-			'gh',
-			'kh',
-			'ng',
-			'nh',
-			'ph',
-			'th',
-			'tr',
-			'qu',
-			'b',
-			'c',
-			'd',
-			'đ',
-			'g',
-			'h',
-			'k',
-			'l',
-			'm',
-			'n',
-			'p',
-			'r',
-			's',
-			't',
-			'v',
-			'x'
+			'ngh', 'ch', 'gh', 'kh', 'ng', 'nh', 'ph', 'th', 'tr', 'qu',
+			'b', 'c', 'd', 'đ', 'g', 'h', 'k', 'l', 'm', 'n',
+			'p', 'r', 's', 't', 'v', 'x'
 		];
 	}
 
@@ -1534,6 +1604,65 @@
 		return resultFromState( nextState, null, tonePlacement );
 	}
 
+	function promoteUoFamilyContinuation( state, tonePlacement ) {
+		var i, firstToken, secondToken, nextState, result,
+			rimeStart = state.structure ? state.structure.rimeStart : 0;
+
+		if ( !state.structure ) {
+			prepareState( state, tonePlacement );
+			rimeStart = state.structure ? state.structure.rimeStart : 0;
+		}
+
+		if (
+			!state.structure ||
+			state.structure.rime === 'uơ' ||
+			state.structure.rime === 'ưo'
+		) {
+			return null;
+		}
+
+		for ( i = state.tokens.length - 2; i >= rimeStart; i-- ) {
+			firstToken = state.tokens[ i ];
+			secondToken = state.tokens[ i + 1 ];
+
+			if (
+				firstToken.isVowel &&
+				secondToken.isVowel &&
+				firstToken.base.toLowerCase() === 'u' &&
+				secondToken.base.toLowerCase() === 'o' &&
+				!isIgnoredVowelPair( state, i )
+			) {
+				if (
+					firstToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE &&
+					secondToken.vowelDiacritic === Vietnamese.VowelDiacritic.HORN
+				) {
+					nextState = cloneState( state );
+					nextState.tokens[ i ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
+				} else if (
+					firstToken.vowelDiacritic === Vietnamese.VowelDiacritic.HORN &&
+					secondToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE
+				) {
+					nextState = cloneState( state );
+					nextState.tokens[ i + 1 ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
+				} else {
+					continue;
+				}
+
+				result = resultFromState( nextState, null, tonePlacement );
+
+				if (
+					result.state.status !== Vietnamese.StateType.UNRECOGNIZED &&
+					result.state.structure &&
+					result.state.structure.rime.indexOf( 'ươ' ) === 0
+				) {
+					return result;
+				}
+			}
+		}
+
+		return null;
+	}
+
 	function removeVowelDiacritic( state, target, literal, tonePlacement ) {
 		var nextState = cloneState( state );
 
@@ -1788,6 +1917,13 @@
 			}
 
 			if ( !extracted.candidate ) {
+				if ( decoded.fallbackLiteralOutput !== undefined ) {
+					return {
+						noop: false,
+						output: extracted.prefix + decoded.fallbackLiteralOutput
+					};
+				}
+
 				return passThrough( input );
 			}
 
@@ -1798,6 +1934,14 @@
 			} );
 
 			if ( !result || !result.handled ) {
+				if ( decoded.fallbackLiteralOutput !== undefined ) {
+					return {
+						noop: false,
+						output: extracted.prefix + extracted.candidate +
+							decoded.fallbackLiteralOutput
+					};
+				}
+
 				return passThrough( input );
 			}
 
@@ -1846,39 +1990,41 @@
 	 * Register a Vietnamese input method that delegates composition to the
 	 * shared adapter and engine boundary.
 	 *
-	 * @param {string} inputMethodId Input method id registered with jQuery.IME.
-	 * @param {string} name Human-readable input method name.
-	 * @param {string} description Input method description.
-	 * @param {Function} decodeCommand Input-method-specific command decoder.
-	 * @param {string[]} [shiftedKeys] Shifted command keys that need a patterns bridge.
-	 * @param {string} [tonePlacement] Tone-placement policy.
+	 * @param {Object} config Registration config.
+	 * @param {string} config.id Input method id registered with jQuery.IME.
+	 * @param {string} config.name Human-readable input method name.
+	 * @param {string} config.description Input method description.
+	 * @param {Function} config.decodeCommand Input-method-specific command decoder.
+	 * @param {string[]} [config.shiftedKeys] Shifted command keys for a patterns bridge.
+	 * @param {string} [config.tonePlacement] Tone-placement policy.
+	 * @param {number} [config.contextLength] Raw key context length.
 	 */
-	function registerInputMethod(
-		inputMethodId, name, description, decodeCommand, shiftedKeys, tonePlacement
-	) {
-		var normalizedTonePlacement = normalizeTonePlacement( tonePlacement ),
+	function registerInputMethod( config ) {
+		var normalizedTonePlacement = normalizeTonePlacement( config.tonePlacement ),
 			adapter = createAdapter( {
-				inputMethodId: inputMethodId,
-				decodeCommand: decodeCommand,
+				inputMethodId: config.id,
+				decodeCommand: config.decodeCommand,
 				engine: engine,
 				tonePlacement: normalizedTonePlacement
 			} ),
 			inputMethod = {
-				id: inputMethodId,
-				name: name,
-				description: description,
-				date: '2026-09-01',
+				id: config.id,
+				name: config.name,
+				description: config.description,
+				date: '2026-09-20',
 				author: 'Plantaest',
-				license: 'GPLv3',
-				version: '0.2.0',
-				contextLength: DEFAULT_CONTEXT_LENGTH,
+				license: 'MIT',
+				version: '1.0.0',
+				contextLength: config.contextLength === undefined ?
+					DEFAULT_CONTEXT_LENGTH :
+					config.contextLength,
 				maxKeyLength: DEFAULT_MAX_KEY_LENGTH,
 				tonePlacement: normalizedTonePlacement,
 				patterns: adapter
 			};
 
-		if ( shiftedKeys && shiftedKeys.length ) {
-			inputMethod.patterns_shift = createShiftedAdapterPatterns( adapter, shiftedKeys );
+		if ( config.shiftedKeys && config.shiftedKeys.length ) {
+			inputMethod.patterns_shift = createShiftedAdapterPatterns( adapter, config.shiftedKeys );
 		}
 
 		$.ime.register( inputMethod );
@@ -1987,7 +2133,7 @@
 		},
 
 		/**
-		 * Re-render a toned candidate after ordinary letters extend it.
+		 * Re-render a candidate after ordinary letters extend it.
 		 *
 		 * @param {string} candidate Candidate text near the caret.
 		 * @param {Object} [options] Engine options.
@@ -1995,9 +2141,23 @@
 		 * @return {Object} Result object with handled and output fields.
 		 */
 		reflowCandidate: function ( candidate, options ) {
-			var output,
+			var output, promotionResult,
 				tonePlacement = options && options.tonePlacement,
 				state = parseCandidate( candidate, tonePlacement );
+
+			promotionResult = promoteUoFamilyContinuation( state, tonePlacement );
+			if (
+				promotionResult &&
+				promotionResult.state.status !== Vietnamese.StateType.UNRECOGNIZED
+			) {
+				output = renderCandidate( promotionResult.state, tonePlacement );
+				if ( output !== normalizeText( candidate, 'NFC' ) ) {
+					return {
+						handled: true,
+						output: output
+					};
+				}
+			}
 
 			if (
 				state.status === Vietnamese.StateType.UNRECOGNIZED ||
@@ -2025,10 +2185,12 @@
 	// Test-facing namespace exports.
 
 	Vietnamese.DEFAULT_CONTEXT_LENGTH = DEFAULT_CONTEXT_LENGTH;
+	Vietnamese.TELEX_QUICK_CONTEXT_LENGTH = TELEX_QUICK_CONTEXT_LENGTH;
 	Vietnamese.DEFAULT_MAX_KEY_LENGTH = DEFAULT_MAX_KEY_LENGTH;
 	Vietnamese.createAdapter = createAdapter;
 	Vietnamese.decodeVNICommand = decodeVNICommand;
 	Vietnamese.decodeTelexCommand = decodeTelexCommand;
+	Vietnamese.decodeSimpleTelexCommand = decodeSimpleTelexCommand;
 	Vietnamese.decodeVIQRCommand = decodeVIQRCommand;
 	Vietnamese.decodeVIQRStarCommand = decodeVIQRStarCommand;
 	Vietnamese.extractCandidate = extractCandidate;
@@ -2042,62 +2204,75 @@
 
 	// Input method registration.
 
-	registerInputMethod(
-		'vi-telex',
-		'Telex',
-		'Vietnamese Telex input method',
-		decodeTelexCommand
-	);
-	registerInputMethod(
-		'vi-vni',
-		'VNI',
-		'Vietnamese VNI input method',
-		decodeVNICommand
-	);
-	registerInputMethod(
-		'vi-viqr',
-		'VIQR',
-		'Vietnamese VIQR input method',
-		decodeVIQRCommand,
-		[ '?', '~', '^', '(', '+' ]
-	);
-	registerInputMethod(
-		'vi-viqr-star',
-		'VIQR*',
-		'Vietnamese VIQR* input method',
-		decodeVIQRStarCommand,
-		[ '?', '~', '^', '(', '*' ]
-	);
-	registerInputMethod(
-		'vi-telex-reformed',
-		'Telex (đặt dấu kiểu mới)',
-		'Vietnamese Telex input method with reformed tone placement',
-		decodeTelexCommand,
-		null,
-		Vietnamese.TonePlacement.REFORMED
-	);
-	registerInputMethod(
-		'vi-vni-reformed',
-		'VNI (đặt dấu kiểu mới)',
-		'Vietnamese VNI input method with reformed tone placement',
-		decodeVNICommand,
-		null,
-		Vietnamese.TonePlacement.REFORMED
-	);
-	registerInputMethod(
-		'vi-viqr-reformed',
-		'VIQR (đặt dấu kiểu mới)',
-		'Vietnamese VIQR input method with reformed tone placement',
-		decodeVIQRCommand,
-		[ '?', '~', '^', '(', '+' ],
-		Vietnamese.TonePlacement.REFORMED
-	);
-	registerInputMethod(
-		'vi-viqr-star-reformed',
-		'VIQR* (đặt dấu kiểu mới)',
-		'Vietnamese VIQR* input method with reformed tone placement',
-		decodeVIQRStarCommand,
-		[ '?', '~', '^', '(', '*' ],
-		Vietnamese.TonePlacement.REFORMED
-	);
+	registerInputMethod( {
+		id: 'vi-telex',
+		name: 'Telex',
+		description: 'Vietnamese Telex input method',
+		decodeCommand: decodeTelexCommand,
+		contextLength: TELEX_QUICK_CONTEXT_LENGTH
+	} );
+	registerInputMethod( {
+		id: 'vi-telex-simple',
+		name: 'Simple Telex',
+		description: 'Vietnamese Simple Telex input method',
+		decodeCommand: decodeSimpleTelexCommand
+	} );
+	registerInputMethod( {
+		id: 'vi-vni',
+		name: 'VNI',
+		description: 'Vietnamese VNI input method',
+		decodeCommand: decodeVNICommand
+	} );
+	registerInputMethod( {
+		id: 'vi-viqr',
+		name: 'VIQR',
+		description: 'Vietnamese VIQR input method',
+		decodeCommand: decodeVIQRCommand,
+		shiftedKeys: [ '?', '~', '^', '(', '+' ]
+	} );
+	registerInputMethod( {
+		id: 'vi-viqr-star',
+		name: 'VIQR*',
+		description: 'Vietnamese VIQR* input method',
+		decodeCommand: decodeVIQRStarCommand,
+		shiftedKeys: [ '?', '~', '^', '(', '*' ]
+	} );
+	registerInputMethod( {
+		id: 'vi-telex-reformed',
+		name: 'Telex (đặt dấu kiểu mới)',
+		description: 'Vietnamese Telex input method with reformed tone placement',
+		decodeCommand: decodeTelexCommand,
+		tonePlacement: Vietnamese.TonePlacement.REFORMED,
+		contextLength: TELEX_QUICK_CONTEXT_LENGTH
+	} );
+	registerInputMethod( {
+		id: 'vi-telex-simple-reformed',
+		name: 'Simple Telex (đặt dấu kiểu mới)',
+		description: 'Vietnamese Simple Telex input method with reformed tone placement',
+		decodeCommand: decodeSimpleTelexCommand,
+		tonePlacement: Vietnamese.TonePlacement.REFORMED
+	} );
+	registerInputMethod( {
+		id: 'vi-vni-reformed',
+		name: 'VNI (đặt dấu kiểu mới)',
+		description: 'Vietnamese VNI input method with reformed tone placement',
+		decodeCommand: decodeVNICommand,
+		tonePlacement: Vietnamese.TonePlacement.REFORMED
+	} );
+	registerInputMethod( {
+		id: 'vi-viqr-reformed',
+		name: 'VIQR (đặt dấu kiểu mới)',
+		description: 'Vietnamese VIQR input method with reformed tone placement',
+		decodeCommand: decodeVIQRCommand,
+		shiftedKeys: [ '?', '~', '^', '(', '+' ],
+		tonePlacement: Vietnamese.TonePlacement.REFORMED
+	} );
+	registerInputMethod( {
+		id: 'vi-viqr-star-reformed',
+		name: 'VIQR* (đặt dấu kiểu mới)',
+		description: 'Vietnamese VIQR* input method with reformed tone placement',
+		decodeCommand: decodeVIQRStarCommand,
+		shiftedKeys: [ '?', '~', '^', '(', '*' ],
+		tonePlacement: Vietnamese.TonePlacement.REFORMED
+	} );
 }( jQuery ) );
