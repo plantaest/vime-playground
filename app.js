@@ -1,11 +1,11 @@
 $( function () {
     const inputMethods = [
-        'vi-vni',
         'vi-telex',
+        'vi-vni',
         'vi-viqr',
         'vi-viqr-star',
-        'vi-vni-reformed',
         'vi-telex-reformed',
+        'vi-vni-reformed',
         'vi-viqr-reformed',
         'vi-viqr-star-reformed'
     ];

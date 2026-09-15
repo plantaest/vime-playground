@@ -195,6 +195,13 @@
 			return createDStrokeCommand( key );
 		}
 
+		if (
+			delayedCommand &&
+			candidateHasLiteralRepeatedKeyRun( input, key, lowerKey )
+		) {
+			return null;
+		}
+
 		if ( vowelDiacriticCommand ) {
 			return createVowelDiacriticCommand( key, vowelDiacriticCommand );
 		}
@@ -203,19 +210,21 @@
 			return createDStrokeCommand( key );
 		}
 
+		if ( delayedCommand && candidateHasTargetVowelDiacritic(
+			input,
+			key,
+			delayedCommand.vowelDiacritic,
+			delayedCommand.bases,
+			tonePlacement
+		) ) {
+			return createVowelDiacriticCommand( key, delayedCommand.vowelDiacritic );
+		}
+
 		if ( delayedCommand && candidateHasRecognizedLiteralStructure( input, tonePlacement ) ) {
 			return null;
 		}
 
-		if ( delayedCommand && (
-			candidateHasTargetVowelDiacritic(
-				input,
-				key,
-				delayedCommand.vowelDiacritic,
-				delayedCommand.bases,
-				tonePlacement
-			) ||
-			candidateCanReceiveTargetVowelDiacritic(
+		if ( delayedCommand && candidateCanReceiveTargetVowelDiacritic(
 				input,
 				key,
 				delayedCommand.vowelDiacritic,
@@ -223,7 +232,6 @@
 				{
 					tonePlacement: tonePlacement
 				}
-			)
 		) ) {
 			return createVowelDiacriticCommand( key, delayedCommand.vowelDiacritic );
 		}
@@ -445,6 +453,25 @@
 		}
 
 		return canSwitchTokenVowelDiacritic( token, vowelDiacritic );
+	}
+
+	/**
+	 * Check whether a delayed Telex command key follows an already literal
+	 * repeated-key run.
+	 *
+	 * Once `ôo` has escaped to literal `oo`, later `o` keys should keep
+	 * extending that literal run instead of starting a new circumflex cycle.
+	 *
+	 * @param {string} input Text window ending with the latest typed key.
+	 * @param {string} commandKey Latest typed key to remove for candidate extraction.
+	 * @param {string} base Lowercase delayed command key.
+	 * @return {boolean} True if the latest key should stay literal.
+	 */
+	function candidateHasLiteralRepeatedKeyRun( input, commandKey, base ) {
+		var extracted = extractCandidate( input, commandKey ),
+			candidate = normalizeText( extracted.candidate, 'NFC' ).toLowerCase();
+
+		return candidate.includes( base + base );
 	}
 
 	/**
@@ -2016,16 +2043,16 @@
 	// Input method registration.
 
 	registerInputMethod(
-		'vi-vni',
-		'VNI',
-		'Vietnamese VNI input method',
-		decodeVNICommand
-	);
-	registerInputMethod(
 		'vi-telex',
 		'Telex',
 		'Vietnamese Telex input method',
 		decodeTelexCommand
+	);
+	registerInputMethod(
+		'vi-vni',
+		'VNI',
+		'Vietnamese VNI input method',
+		decodeVNICommand
 	);
 	registerInputMethod(
 		'vi-viqr',
@@ -2042,18 +2069,18 @@
 		[ '?', '~', '^', '(', '*' ]
 	);
 	registerInputMethod(
-		'vi-vni-reformed',
-		'VNI (đặt dấu kiểu mới)',
-		'Vietnamese VNI input method with reformed tone placement',
-		decodeVNICommand,
-		null,
-		Vietnamese.TonePlacement.REFORMED
-	);
-	registerInputMethod(
 		'vi-telex-reformed',
 		'Telex (đặt dấu kiểu mới)',
 		'Vietnamese Telex input method with reformed tone placement',
 		decodeTelexCommand,
+		null,
+		Vietnamese.TonePlacement.REFORMED
+	);
+	registerInputMethod(
+		'vi-vni-reformed',
+		'VNI (đặt dấu kiểu mới)',
+		'Vietnamese VNI input method with reformed tone placement',
+		decodeVNICommand,
 		null,
 		Vietnamese.TonePlacement.REFORMED
 	);
