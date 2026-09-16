@@ -519,6 +519,9 @@
 		target = resolveVowelDiacriticTarget( state, vowelDiacritic );
 		if ( target === -1 ) {
 			return canSwitchSameBaseVowelDiacritic( state, vowelDiacritic, bases ) ||
+				vowelDiacritic === Vietnamese.VowelDiacritic.BREVE &&
+				bases.includes( 'a' ) &&
+				findUnmarkedOaPair( state ) !== -1 ||
 				vowelDiacritic === Vietnamese.VowelDiacritic.CIRCUMFLEX &&
 				bases.includes( 'o' ) &&
 				findUoFamilyPair(
@@ -1518,7 +1521,7 @@
 		return -1;
 	}
 
-	function findHornUaPair( state ) {
+	function findUnmarkedUaPair( state ) {
 		var i, firstToken, secondToken;
 
 		for ( i = state.tokens.length - 2; i >= 0; i-- ) {
@@ -1529,6 +1532,29 @@
 				firstToken.isVowel &&
 				secondToken.isVowel &&
 				firstToken.base.toLowerCase() === 'u' &&
+				secondToken.base.toLowerCase() === 'a' &&
+				firstToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE &&
+				secondToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE &&
+				!isIgnoredVowelPair( state, i )
+			) {
+				return i;
+			}
+		}
+
+		return -1;
+	}
+
+	function findUnmarkedOaPair( state ) {
+		var i, firstToken, secondToken;
+
+		for ( i = state.tokens.length - 2; i >= 0; i-- ) {
+			firstToken = state.tokens[ i ];
+			secondToken = state.tokens[ i + 1 ];
+
+			if (
+				firstToken.isVowel &&
+				secondToken.isVowel &&
+				firstToken.base.toLowerCase() === 'o' &&
 				secondToken.base.toLowerCase() === 'a' &&
 				firstToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE &&
 				secondToken.vowelDiacritic === Vietnamese.VowelDiacritic.NONE &&
@@ -1556,7 +1582,7 @@
 	}
 
 	function applyHornToUa( state, tonePlacement ) {
-		var pairStart = findHornUaPair( state ),
+		var pairStart = findUnmarkedUaPair( state ),
 			nextState;
 
 		if ( pairStart === -1 ) {
@@ -1565,6 +1591,32 @@
 
 		nextState = cloneState( state );
 		nextState.tokens[ pairStart ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
+		return resultFromState( nextState, null, tonePlacement );
+	}
+
+	function applyCircumflexToUa( state, tonePlacement ) {
+		var pairStart = findUnmarkedUaPair( state ),
+			nextState;
+
+		if ( pairStart === -1 ) {
+			return null;
+		}
+
+		nextState = cloneState( state );
+		nextState.tokens[ pairStart + 1 ].vowelDiacritic = Vietnamese.VowelDiacritic.CIRCUMFLEX;
+		return resultFromState( nextState, null, tonePlacement );
+	}
+
+	function applyBreveToOa( state, tonePlacement ) {
+		var pairStart = findUnmarkedOaPair( state ),
+			nextState;
+
+		if ( pairStart === -1 ) {
+			return null;
+		}
+
+		nextState = cloneState( state );
+		nextState.tokens[ pairStart + 1 ].vowelDiacritic = Vietnamese.VowelDiacritic.BREVE;
 		return resultFromState( nextState, null, tonePlacement );
 	}
 
@@ -1581,7 +1633,9 @@
 		}
 
 		nextState = cloneState( state );
-		nextState.tokens[ pairStart ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
+		if ( state.structure && state.structure.rime !== 'uô' ) {
+			nextState.tokens[ pairStart ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
+		}
 		nextState.tokens[ pairStart + 1 ].vowelDiacritic = Vietnamese.VowelDiacritic.HORN;
 		return resultFromState( nextState, null, tonePlacement );
 	}
@@ -1777,6 +1831,13 @@
 
 		if ( vowelDiacritic === Vietnamese.VowelDiacritic.CIRCUMFLEX ) {
 			return applyCircumflexToHornUo( state, tonePlacement ) ||
+				applyCircumflexToUa( state, tonePlacement ) ||
+				applySameBaseVowelDiacriticSwitch( state, vowelDiacritic, tonePlacement ) ||
+				applySimpleVowelDiacritic( state, command, tonePlacement );
+		}
+
+		if ( vowelDiacritic === Vietnamese.VowelDiacritic.BREVE ) {
+			return applyBreveToOa( state, tonePlacement ) ||
 				applySameBaseVowelDiacriticSwitch( state, vowelDiacritic, tonePlacement ) ||
 				applySimpleVowelDiacritic( state, command, tonePlacement );
 		}
