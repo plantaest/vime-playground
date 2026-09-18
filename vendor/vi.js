@@ -4,6 +4,9 @@
 	var DEFAULT_CONTEXT_LENGTH = 0,
 		TELEX_QUICK_CONTEXT_LENGTH = 2,
 		DEFAULT_MAX_KEY_LENGTH = 16,
+		TELEX_SHIFTED_KEYS = [ 'A', 'E', 'O', 'W', 'D', 'S', 'F', 'R', 'X', 'J', 'Z' ],
+		VIQR_SHIFTED_KEYS = [ '?', '~', '^', '(', '+', 'D' ],
+		VIQR_STAR_SHIFTED_KEYS = [ '?', '~', '^', '(', '*', 'D' ],
 		COMBINING_ACUTE = '\u0301',
 		COMBINING_GRAVE = '\u0300',
 		COMBINING_HOOK = '\u0309',
@@ -24,6 +27,170 @@
 		markToVowelDiacritic,
 		rimeRecognitionMaps,
 		engine;
+
+	/**
+	 * @typedef {Object} JQueryIMEPatternResult
+	 * @property {boolean} noop Whether jQuery.IME should leave the input unchanged.
+	 * @property {string} output Replacement output or original input.
+	 */
+
+	/**
+	 * @typedef {Object} SemanticCommand
+	 * @property {string} type CommandType enum value.
+	 * @property {string} [literal] Literal key to append during repeated-key escape.
+	 * @property {string} [tone] Tone enum value for APPLY_TONE.
+	 * @property {string} [vowelDiacritic] VowelDiacritic enum value for APPLY_VOWEL_DIACRITIC.
+	 */
+
+	/**
+	 * @typedef {Object} DecodedCommand
+	 * @property {string} key Input-method key consumed by the adapter.
+	 * @property {SemanticCommand} [command] Shared semantic command.
+	 * @property {string} [literalOutput] Adapter-level literal output.
+	 * @property {string} [fallbackLiteralOutput] Literal output if the engine cannot transform.
+	 */
+
+	/**
+	 * @typedef {Object} CompositionToken
+	 * @property {string} base Original base letter with case preserved.
+	 * @property {boolean} dStroke Whether the token represents `đ` / `Đ`.
+	 * @property {boolean} isVowel Whether the token is a Vietnamese base vowel candidate.
+	 * @property {string} tone Tone enum value parsed from this token.
+	 * @property {string} vowelDiacritic VowelDiacritic enum value parsed from this token.
+	 */
+
+	/**
+	 * @typedef {Object} EligibleVowels
+	 * @property {string[]} identities Lowercase rendered vowel identities.
+	 * @property {number[]} indices Token indices for the eligible vowels.
+	 */
+
+	/**
+	 * @typedef {Object} RimeRecognition
+	 * @property {string} status RimeStatus enum value.
+	 */
+
+	/**
+	 * @typedef {Object} RimeInventory
+	 * @property {string[]} complete Rimes accepted as complete composition structures.
+	 * @property {string[]} composable Source spellings accepted as composition precursors.
+	 */
+
+	/**
+	 * @typedef {Object} RimeRecognitionMaps
+	 * @property {Object.<string, boolean>} complete Complete-rime lookup map.
+	 * @property {Object.<string, boolean>} composable Composition-precursor lookup map.
+	 * @property {Object.<string, boolean>} prefix Prefix lookup map.
+	 */
+
+	/**
+	 * @typedef {Object} OnsetResolution
+	 * @property {number} end Token index where the onset ends.
+	 * @property {Object.<string, boolean>} ignoredVowelIndices Vowel-like onset token indices.
+	 * @property {string} text Written onset.
+	 */
+
+	/**
+	 * @typedef {Object} OrthographicStructure
+	 * @property {boolean} checked Whether the rime has a checked ending.
+	 * @property {string} ending Written ending, or an empty string.
+	 * @property {Object.<string, boolean>} ignoredVowelIndices Vowel-like onset token indices.
+	 * @property {string} onset Written onset.
+	 * @property {string} rime Written rime.
+	 * @property {RimeRecognition} rimeRecognition Rime recognizer result.
+	 * @property {string} rimeStatus RimeStatus enum value.
+	 * @property {number} rimeStart Token index where the rime begins.
+	 * @property {number} toneTargetIndex Token index for the visible tone mark, or -1.
+	 * @property {EligibleVowels} vowels Vowels eligible for Vietnamese composition.
+	 */
+
+	/**
+	 * @typedef {Object} CompositionState
+	 * @property {string} status StateType enum value.
+	 * @property {string} tone Semantic Tone enum value for the whole candidate.
+	 * @property {CompositionToken[]} tokens Parsed candidate tokens.
+	 * @property {OrthographicStructure|null} [structure] Analyzed structure.
+	 */
+
+	/**
+	 * @typedef {Object} TransformResult
+	 * @property {CompositionState} state Re-analyzed state after transformation.
+	 * @property {string} literalSuffix Literal suffix appended for escape behavior.
+	 */
+
+	/**
+	 * @typedef {Object} EngineResult
+	 * @property {boolean} handled Whether the engine transformed or reflowed the candidate.
+	 * @property {string} [output] Transformed candidate output.
+	 */
+
+	/**
+	 * @typedef {Object} EngineOptions
+	 * @property {string} [context] Raw jQuery.IME key context.
+	 * @property {string} [inputMethodId] Input method id passed through by the adapter.
+	 * @property {string} [tonePlacement] Tone-placement policy.
+	 */
+
+	/**
+	 * @typedef {Object} VietnameseEngine
+	 * @property {Function} transformCandidate Semantic-command transform entry point.
+	 * @property {Function} reflowCandidate Ordinary-letter reflow entry point.
+	 */
+
+	/**
+	 * @typedef {Object} ExtractedCandidate
+	 * @property {string} prefix Unchanged prefix inside jQuery.IME's input window.
+	 * @property {string} candidate Candidate selected for Vietnamese composition.
+	 */
+
+	/**
+	 * @typedef {Object} DecoderOptions
+	 * @property {string} [inputMethodId] Input method id passed through by the adapter.
+	 * @property {string} [tonePlacement] Tone-placement policy.
+	 */
+
+	/**
+	 * @typedef {Object} TargetVowelDiacriticOptions
+	 * @property {string} [tonePlacement] Tone-placement policy.
+	 */
+
+	/**
+	 * @typedef {Object} TelexProfileOptions
+	 * @property {boolean} [quickW] Whether standalone quick `w` is enabled.
+	 */
+
+	/**
+	 * @typedef {Object} VowelPairPattern
+	 * @property {string} firstBase Lowercase base of the first token.
+	 * @property {string} secondBase Lowercase base of the second token.
+	 * @property {string} firstVowelDiacritic VowelDiacritic enum value for the first token.
+	 * @property {string} secondVowelDiacritic VowelDiacritic enum value for the second token.
+	 */
+
+	/**
+	 * @typedef {Object} VowelPairUpdate
+	 * @property {string} [firstVowelDiacritic] VowelDiacritic enum value for the first token.
+	 * @property {string} [secondVowelDiacritic] VowelDiacritic enum value for the second token.
+	 */
+
+	/**
+	 * @typedef {Object} AdapterOptions
+	 * @property {Function} decodeCommand Input-method-specific command decoder.
+	 * @property {VietnameseEngine} [engine] Shared Vietnamese composition engine.
+	 * @property {string} inputMethodId Input method id passed to the engine.
+	 * @property {string} [tonePlacement] Tone-placement policy.
+	 */
+
+	/**
+	 * @typedef {Object} RegistrationConfig
+	 * @property {string} id Input method id registered with jQuery.IME.
+	 * @property {string} name Human-readable input method name.
+	 * @property {string} description Input method description.
+	 * @property {Function} decodeCommand Input-method-specific command decoder.
+	 * @property {string[]} [shiftedKeys] Shifted command keys for a patterns bridge.
+	 * @property {string} [tonePlacement] Tone-placement policy.
+	 * @property {number} [contextLength] Raw key context length.
+	 */
 
 	// [1] Namespace constants and lookup tables
 
@@ -114,7 +281,7 @@
 	 * Return jQuery.IME pass-through output for input the adapter should leave unchanged.
 	 *
 	 * @param {string} input Original input window.
-	 * @return {Object} jQuery.IME pass-through result.
+	 * @return {JQueryIMEPatternResult} jQuery.IME pass-through result.
 	 */
 	function passThrough( input ) {
 		return {
@@ -130,7 +297,7 @@
 	 *
 	 * @param {string} key Input-method command key.
 	 * @param {string} tone Tone enum value.
-	 * @return {Object} Decoded semantic command.
+	 * @return {DecodedCommand} Decoded semantic command.
 	 */
 	function createToneCommand( key, tone ) {
 		return {
@@ -147,7 +314,7 @@
 	 * Build a shared semantic tone-removal command from an input-method key.
 	 *
 	 * @param {string} key Input-method command key.
-	 * @return {Object} Decoded semantic command.
+	 * @return {DecodedCommand} Decoded semantic command.
 	 */
 	function createRemoveToneCommand( key ) {
 		return {
@@ -164,7 +331,7 @@
 	 *
 	 * @param {string} key Input-method command key.
 	 * @param {string} vowelDiacritic VowelDiacritic enum value.
-	 * @return {Object} Decoded semantic command.
+	 * @return {DecodedCommand} Decoded semantic command.
 	 */
 	function createVowelDiacriticCommand( key, vowelDiacritic ) {
 		return {
@@ -181,7 +348,7 @@
 	 * Build a shared semantic d-stroke command with repeated-key escape support.
 	 *
 	 * @param {string} key Input-method command key.
-	 * @return {Object} Decoded semantic command.
+	 * @return {DecodedCommand} Decoded semantic command.
 	 */
 	function createDStrokeCommand( key ) {
 		return {
@@ -197,7 +364,7 @@
 	 * Build a d-stroke command that cannot escape back to literal input.
 	 *
 	 * @param {string} key Input-method command key.
-	 * @return {Object} Decoded semantic command.
+	 * @return {DecodedCommand} Decoded semantic command.
 	 */
 	function createOneWayDStrokeCommand( key ) {
 		return {
@@ -213,7 +380,7 @@
 	 *
 	 * @param {string} key Input-method command key.
 	 * @param {string} literalOutput Literal output.
-	 * @return {Object} Decoded literal-output command.
+	 * @return {DecodedCommand} Decoded literal-output command.
 	 */
 	function createLiteralOutputCommand( key, literalOutput ) {
 		return {
@@ -250,7 +417,7 @@
 	 * Decode a VNI key into a shared Vietnamese semantic command.
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeVNICommand( input ) {
 		var toneCommands = {
@@ -296,7 +463,7 @@
 	 * @param {string} key Command key.
 	 * @param {string} vowelDiacritic VowelDiacritic enum value.
 	 * @param {string} fallbackLiteralOutput Literal output when the engine does not handle the command.
-	 * @return {Object} Decoded command with fallback literal output.
+	 * @return {DecodedCommand} Decoded command with fallback literal output.
 	 */
 	function createVowelDiacriticCommandWithFallback( key, vowelDiacritic, fallbackLiteralOutput ) {
 		var decoded = createVowelDiacriticCommand( key, vowelDiacritic );
@@ -369,10 +536,10 @@
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
 	 * @param {string} context Raw jQuery.IME key context.
-	 * @param {Object} [options] Adapter options.
-	 * @param {Object} [telexOptions] Telex profile options.
+	 * @param {DecoderOptions} [options] Decoder options.
+	 * @param {TelexProfileOptions} [telexOptions] Telex profile options.
 	 * @param {boolean} [telexOptions.quickW] Whether standalone quick `w` is enabled.
-	 * @return {Object|null} Decoded command with key and command fields, literal output, or null.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, literal output, or null.
 	 */
 	function decodeTelexCommandWithOptions( input, context, options, telexOptions ) {
 		var toneCommands = {
@@ -500,8 +667,8 @@
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
 	 * @param {string} context Raw jQuery.IME key context.
-	 * @param {Object} [options] Adapter options.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @param {DecoderOptions} [options] Decoder options.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeTelexCommand( input, context, options ) {
 		return decodeTelexCommandWithOptions( input, context, options, {
@@ -517,8 +684,8 @@
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
 	 * @param {string} context Raw jQuery.IME key context.
-	 * @param {Object} [options] Adapter options.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @param {DecoderOptions} [options] Decoder options.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeSimpleTelexCommand( input, context, options ) {
 		return decodeTelexCommandWithOptions( input, context, options, {
@@ -556,7 +723,7 @@
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
 	 * @param {string} hornKey VIQR horn key, either `+` or `*`.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeVIQRCommandWithHornKey( input, hornKey ) {
 		var toneCommands = {
@@ -608,7 +775,7 @@
 	 * Decode a VIQR key into a shared Vietnamese semantic command.
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeVIQRCommand( input ) {
 		return decodeVIQRCommandWithHornKey( input, '+' );
@@ -618,7 +785,7 @@
 	 * Decode a VIQR* key into a shared Vietnamese semantic command.
 	 *
 	 * @param {string} input Text window ending with the latest typed key.
-	 * @return {Object|null} Decoded command with key and command fields, or null.
+	 * @return {DecodedCommand|null} Decoded command with key and command fields, or null.
 	 */
 	function decodeVIQRStarCommand( input ) {
 		return decodeVIQRCommandWithHornKey( input, '*' );
@@ -642,7 +809,7 @@
 	 * @param {string} input Text window ending with the command key.
 	 * @param {string} commandKey Command key recognized by the adapter.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Parsed candidate state, or null when empty.
+	 * @return {CompositionState|null} Parsed candidate state, or null when empty.
 	 */
 	function parseExtractedCandidate( input, commandKey, tonePlacement ) {
 		var extracted = extractCandidate( input, commandKey );
@@ -692,7 +859,7 @@
 	 * @param {string} commandKey Command key recognized by the adapter.
 	 * @param {string} vowelDiacritic Expected vowel-diacritic enum value.
 	 * @param {string[]} bases Base vowel letters that may receive this command.
-	 * @param {Object} [options] Extra constraints for input-method-specific commands.
+	 * @param {TargetVowelDiacriticOptions} [options] Extra constraints for input-method-specific commands.
 	 * @return {boolean} True if the command can apply to the candidate.
 	 */
 	function candidateCanReceiveTargetVowelDiacritic(
@@ -728,7 +895,7 @@
 	/**
 	 * Check whether a candidate can switch an existing same-base vowel diacritic.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} vowelDiacritic Requested VowelDiacritic enum value.
 	 * @param {string[]} bases Base vowel letters accepted by the delayed command.
 	 * @return {boolean} True if a same-base switch can satisfy the command.
@@ -817,7 +984,7 @@
 	 *
 	 * @param {string} input Text window ending with the command key.
 	 * @param {string} commandKey Command key recognized by the adapter.
-	 * @return {Object} Object with prefix and candidate string properties.
+	 * @return {ExtractedCandidate} Extracted candidate.
 	 */
 	function extractCandidate( input, commandKey ) {
 		var commandStart = input.length - commandKey.length,
@@ -887,7 +1054,7 @@
 	 * Create a semantic token from one base character.
 	 *
 	 * @param {string} character Base character from NFD-normalized candidate text.
-	 * @return {Object|null} Composition token, or null for unsupported characters.
+	 * @return {CompositionToken|null} Composition token, or null for unsupported characters.
 	 */
 	function createToken( character ) {
 		if ( character === 'đ' ) {
@@ -926,8 +1093,8 @@
 	/**
 	 * Clone one semantic token before a transform mutates it.
 	 *
-	 * @param {Object} token Composition token.
-	 * @return {Object} Cloned token.
+	 * @param {CompositionToken} token Composition token.
+	 * @return {CompositionToken} Cloned token.
 	 */
 	function cloneToken( token ) {
 		return {
@@ -942,8 +1109,8 @@
 	/**
 	 * Clone the mutable parts of a composition state before transformation.
 	 *
-	 * @param {Object} state Composition state.
-	 * @return {Object} Cloned state.
+	 * @param {CompositionState} state Composition state.
+	 * @return {CompositionState} Cloned state.
 	 */
 	function cloneState( state ) {
 		return {
@@ -956,10 +1123,10 @@
 	/**
 	 * Re-analyze a transformed state and package any literal suffix.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string|null} literalSuffix Literal suffix to append, if any.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Transform result with state and literalSuffix fields.
+	 * @return {TransformResult} Transform result with state and literalSuffix fields.
 	 */
 	function resultFromState( state, literalSuffix, tonePlacement ) {
 		return {
@@ -971,7 +1138,7 @@
 	/**
 	 * Render one token to the identity used by structure analysis.
 	 *
-	 * @param {Object} token Composition token.
+	 * @param {CompositionToken} token Composition token.
 	 * @return {string} Token identity.
 	 */
 	function getTokenIdentity( token ) {
@@ -989,7 +1156,7 @@
 	/**
 	 * Render a state to lowercase structural text without visible tone marks.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @return {string} Lowercase structural text.
 	 */
 	function getLowerText( state ) {
@@ -1013,7 +1180,7 @@
 	 *
 	 * It is intentionally structural data, not a word list.
 	 *
-	 * @return {Object} Recognized complete rimes and composition precursors.
+	 * @return {RimeInventory} Recognized complete rimes and composition precursors.
 	 */
 	function getRimeInventory() {
 		return {
@@ -1087,7 +1254,7 @@
 	 * The maps are derived from the finite inventory so recognition can remain
 	 * data-driven without scanning the inventory for every parsed candidate.
 	 *
-	 * @return {Object} Recognition maps keyed by normalized rime text.
+	 * @return {RimeRecognitionMaps} Recognition maps keyed by normalized rime text.
 	 */
 	function buildRimeRecognitionMaps() {
 		var i, j, rime, inventoryList,
@@ -1100,7 +1267,7 @@
 		 * Add exact rime matches and every shorter prefix used for intermediate states.
 		 *
 		 * @param {string[]} source Rime inventory list.
-		 * @param {Object} target Recognition map to populate.
+		 * @param {Object.<string, boolean>} target Recognition map to populate.
 		 */
 		function addInventory( source, target ) {
 			for ( i = 0; i < source.length; i++ ) {
@@ -1128,7 +1295,7 @@
 	/**
 	 * Return cached rime recognition maps, building them on first use.
 	 *
-	 * @return {Object} Recognition maps keyed by normalized rime text.
+	 * @return {RimeRecognitionMaps} Recognition maps keyed by normalized rime text.
 	 */
 	function getRimeRecognitionMaps() {
 		if ( !rimeRecognitionMaps ) {
@@ -1142,7 +1309,7 @@
 	 * Recognize a rime against the finite Vietnamese composition inventory.
 	 *
 	 * @param {string} rime Candidate rime text.
-	 * @return {Object} Recognition result with a RimeStatus value.
+	 * @return {RimeRecognition} Recognition result with a RimeStatus value.
 	 */
 	function recognizeRime( rime ) {
 		var maps = getRimeRecognitionMaps(),
@@ -1191,7 +1358,7 @@
 	/**
 	 * Check whether there is vowel material at or after a token index.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {number} startIndex Token index to start scanning from.
 	 * @return {boolean} True if a later token is a vowel.
 	 */
@@ -1234,9 +1401,9 @@
 	 * `qu` and `gi` are special because their written second letters can look
 	 * like vowels but may belong to the onset for composition purposes.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} lowerText Lowercase candidate text.
-	 * @return {Object} Onset boundary, ignored vowel indices, and onset text.
+	 * @return {OnsetResolution} Onset boundary, ignored vowel indices, and onset text.
 	 */
 	function resolveOnset( state, lowerText ) {
 		var i;
@@ -1277,9 +1444,9 @@
 	/**
 	 * Collect vowel identities that remain eligible after onset handling.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} ignoredVowelIndices Token indices ignored as onset material.
-	 * @return {Object} Eligible vowel identities and token indices.
+	 * @param {CompositionState} state Composition state.
+	 * @param {Object.<string, boolean>} ignoredVowelIndices Token indices ignored as onset material.
+	 * @return {EligibleVowels} Eligible vowel identities and token indices.
 	 */
 	function collectEligibleVowels( state, ignoredVowelIndices ) {
 		var i,
@@ -1345,7 +1512,7 @@
 	/**
 	 * Resolve tone targets for covered complex rime and nucleus families.
 	 *
-	 * @param {Object} structure Analyzed orthographic structure.
+	 * @param {OrthographicStructure} structure Analyzed orthographic structure.
 	 * @return {number} Token index, or -1 when no family-specific target applies.
 	 */
 	function findRimePatternToneTarget( structure ) {
@@ -1385,8 +1552,8 @@
 	/**
 	 * Resolve tone placement for final off-glides such as `ai`, `ay`, `ao`, and `au`.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} vowels Eligible vowel identities and token indices.
+	 * @param {CompositionState} state Composition state.
+	 * @param {EligibleVowels} vowels Eligible vowel identities and token indices.
 	 * @return {number} Token index, or -1 when the rime has no final off-glide.
 	 */
 	function findOffGlideToneTarget( state, vowels ) {
@@ -1413,7 +1580,7 @@
 	/**
 	 * Check whether tone placement depends on traditional versus reformed policy.
 	 *
-	 * @param {Object} structure Analyzed orthographic structure.
+	 * @param {OrthographicStructure} structure Analyzed orthographic structure.
 	 * @return {boolean} True for open `oa`, `oe`, and `uy`.
 	 */
 	function isOpenMedialRime( structure ) {
@@ -1423,7 +1590,7 @@
 	/**
 	 * Resolve the policy-specific target for open `oa`, `oe`, and `uy`.
 	 *
-	 * @param {Object} structure Analyzed orthographic structure.
+	 * @param {OrthographicStructure} structure Analyzed orthographic structure.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 * @return {number} Token index, or -1 when the rime is not an open medial rime.
 	 */
@@ -1448,8 +1615,8 @@
 	 * target, open medial policy, known rime families, off-glides, then last
 	 * eligible vowel fallback.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} structure Analyzed orthographic structure.
+	 * @param {CompositionState} state Composition state.
+	 * @param {OrthographicStructure} structure Analyzed orthographic structure.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 * @return {number} Token index, or -1 if there is no eligible vowel.
 	 */
@@ -1486,9 +1653,9 @@
 	/**
 	 * Analyze candidate tokens as an orthographic onset plus rime structure.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Structure analysis used for validation and rendering.
+	 * @return {OrthographicStructure} Structure analysis used for validation and rendering.
 	 */
 	function analyzeStructure( state, tonePlacement ) {
 		var lowerText = getLowerText( state ),
@@ -1521,7 +1688,7 @@
 	 * This keeps Telex command keys literal once a Latin run cannot be
 	 * recognized by the finite Vietnamese composition inventory.
 	 *
-	 * @param {Object} state Composition state with analyzed structure.
+	 * @param {CompositionState} state Composition state with analyzed structure.
 	 * @return {string} StateType value.
 	 */
 	function classifyStructure( state ) {
@@ -1553,9 +1720,9 @@
 	/**
 	 * Attach structure analysis and structural classification to a state.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} The same state object with structure and status fields.
+	 * @return {CompositionState} The same state object with structure and status fields.
 	 */
 	function prepareState( state, tonePlacement ) {
 		state.structure = analyzeStructure( state, tonePlacement );
@@ -1600,9 +1767,9 @@
 	 * The parser accepts at most one semantic tone for the whole candidate and
 	 * at most one vowel diacritic per token.
 	 *
-	 * @param {Object} token Token currently being parsed.
+	 * @param {CompositionToken} token Token currently being parsed.
 	 * @param {string} mark Combining mark.
-	 * @param {Object} state Composition state being built.
+	 * @param {CompositionState} state Composition state being built.
 	 * @return {boolean} True if the mark was accepted.
 	 */
 	function addCombiningMarkToToken( token, mark, state ) {
@@ -1638,7 +1805,7 @@
 	/**
 	 * Return an empty unrecognized state for candidates that cannot be parsed.
 	 *
-	 * @return {Object} Unrecognized composition state.
+	 * @return {CompositionState} Unrecognized composition state.
 	 */
 	function unrecognizedCandidate() {
 		return {
@@ -1654,7 +1821,7 @@
 	 *
 	 * @param {string} candidate Candidate text near the caret.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Composition state.
+	 * @return {CompositionState} Composition state.
 	 */
 	function parseCandidate( candidate, tonePlacement ) {
 		var i, character, token,
@@ -1697,7 +1864,7 @@
 	/**
 	 * Render a semantic token to NFC, optionally with a visible tone mark.
 	 *
-	 * @param {Object} token Composition token.
+	 * @param {CompositionToken} token Composition token.
 	 * @param {string} tone Tone enum value to render on this token.
 	 * @return {string} NFC token output.
 	 */
@@ -1723,7 +1890,7 @@
 	/**
 	 * Render a token as a lowercase vowel identity without tone.
 	 *
-	 * @param {Object} token Composition token.
+	 * @param {CompositionToken} token Composition token.
 	 * @return {string} NFC vowel identity.
 	 */
 	function getVowelIdentity( token ) {
@@ -1739,7 +1906,7 @@
 	/**
 	 * Resolve the token index that should carry the visible tone mark.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 * @return {number} Token index, or -1 if there is no vowel target.
 	 */
@@ -1754,7 +1921,7 @@
 	/**
 	 * Render a Vietnamese composition state to normalized output text.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 * @return {string} NFC output.
 	 */
@@ -1776,7 +1943,7 @@
 	/**
 	 * Update the semantic tone and synchronize per-token tone fields.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} tone Tone enum value.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 */
@@ -1797,7 +1964,7 @@
 	 *
 	 * Checked rimes accept only acute and dot tone commands.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} tone Tone enum value.
 	 * @param {string} [tonePlacement] Tone-placement policy.
 	 * @return {boolean} True if the tone command is structurally allowed.
@@ -1816,10 +1983,10 @@
 	/**
 	 * Apply, replace, or repeated-key escape a semantic tone.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} command Semantic apply-tone command.
+	 * @param {CompositionState} state Composition state.
+	 * @param {SemanticCommand} command Semantic apply-tone command.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null if the tone is not allowed.
+	 * @return {TransformResult|null} Transform result, or null if the tone is not allowed.
 	 */
 	function applyTone( state, command, tonePlacement ) {
 		var nextState,
@@ -1842,9 +2009,9 @@
 	/**
 	 * Remove the semantic tone from a candidate.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no tone exists.
+	 * @return {TransformResult|null} Transform result, or null when no tone exists.
 	 */
 	function removeTone( state, tonePlacement ) {
 		var nextState;
@@ -1861,7 +2028,7 @@
 	/**
 	 * Resolve the primary target for a simple vowel-diacritic command.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} vowelDiacritic VowelDiacritic enum value.
 	 * @return {number} Token index, or -1 when no simple target exists.
 	 */
@@ -1882,7 +2049,7 @@
 	/**
 	 * Resolve a later eligible vowel for multi-vowel repeated-key behavior.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} vowelDiacritic VowelDiacritic enum value.
 	 * @param {number} excludedTarget Token index already carrying the command.
 	 * @return {number} Token index, or -1 when no additional target exists.
@@ -1910,11 +2077,11 @@
 	/**
 	 * Apply a vowel diacritic to one token and reclassify the result.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {number} target Token index.
 	 * @param {string} vowelDiacritic VowelDiacritic enum value.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Transform result.
+	 * @return {TransformResult} Transform result.
 	 */
 	function applyVowelDiacriticToTarget( state, target, vowelDiacritic, tonePlacement ) {
 		var nextState = cloneState( state );
@@ -1926,7 +2093,7 @@
 	/**
 	 * Check whether a vowel pair is part of ignored onset material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {number} firstIndex First token index of the pair.
 	 * @return {boolean} True if either token is ignored as onset material.
 	 */
@@ -1941,8 +2108,8 @@
 	/**
 	 * Find the last matching vowel pair outside ignored onset material.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} pair Pair shape to match.
+	 * @param {CompositionState} state Composition state.
+	 * @param {VowelPairPattern} pair Pair shape to match.
 	 * @return {number} First token index of the pair, or -1.
 	 */
 	function findVowelPair( state, pair ) {
@@ -1971,11 +2138,11 @@
 	/**
 	 * Apply vowel-diacritic changes to a two-token vowel family.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {number} pairStart First token index of the pair.
-	 * @param {Object} pair Vowel diacritic values to write.
+	 * @param {VowelPairUpdate} pair Vowel diacritic values to write.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Transform result.
+	 * @return {TransformResult} Transform result.
 	 */
 	function applyVowelPairDiacritics( state, pairStart, pair, tonePlacement ) {
 		var nextState = cloneState( state );
@@ -1995,7 +2162,7 @@
 	 *
 	 * Open `uo` is intentionally excluded so `huo7 -> huơ` can remain distinct.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @return {number} First token index of the pair, or -1.
 	 */
 	function findHornUoPair( state ) {
@@ -2014,7 +2181,7 @@
 	/**
 	 * Find a `uo` pair with exact vowel-diacritic values.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} firstVowelDiacritic VowelDiacritic enum value for `u`.
 	 * @param {string} secondVowelDiacritic VowelDiacritic enum value for `o`.
 	 * @return {number} First token index of the pair, or -1.
@@ -2031,7 +2198,7 @@
 	/**
 	 * Find an unmarked `ua` pair that can become `ưa` or UÂ-family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @return {number} First token index of the pair, or -1.
 	 */
 	function findUnmarkedUaPair( state ) {
@@ -2046,7 +2213,7 @@
 	/**
 	 * Find an unmarked `oa` pair that can become OĂ-family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @return {number} First token index of the pair, or -1.
 	 */
 	function findUnmarkedOaPair( state ) {
@@ -2061,9 +2228,9 @@
 	/**
 	 * Apply horn to covered unmarked `uo` family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyHornToUo( state, tonePlacement ) {
 		var pairStart = findHornUoPair( state );
@@ -2081,9 +2248,9 @@
 	/**
 	 * Apply horn to unmarked `ua`, producing `ưa`-family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyHornToUa( state, tonePlacement ) {
 		var pairStart = findUnmarkedUaPair( state );
@@ -2100,9 +2267,9 @@
 	/**
 	 * Apply circumflex to unmarked `ua`, producing UÂ-family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyCircumflexToUa( state, tonePlacement ) {
 		var pairStart = findUnmarkedUaPair( state );
@@ -2119,9 +2286,9 @@
 	/**
 	 * Apply breve to unmarked `oa`, producing OĂ-family material.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyBreveToOa( state, tonePlacement ) {
 		var pairStart = findUnmarkedOaPair( state );
@@ -2138,9 +2305,9 @@
 	/**
 	 * Switch UÔ-family material to ƯƠ-family material while preserving tone.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyHornToCircumflexUo( state, tonePlacement ) {
 		var pairStart = findUoFamilyPair(
@@ -2165,9 +2332,9 @@
 	/**
 	 * Switch ƯƠ-family material back to UÔ-family material while preserving tone.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no transition applies.
+	 * @return {TransformResult|null} Transform result, or null when no transition applies.
 	 */
 	function applyCircumflexToHornUo( state, tonePlacement ) {
 		var pairStart = findUoFamilyPair(
@@ -2192,9 +2359,9 @@
 	 * This is used during candidate reflow after ordinary letters extend the
 	 * rime, such as `nguơi -> ngươi` and `tu7oi -> tươi`.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no promotion applies.
+	 * @return {TransformResult|null} Transform result, or null when no promotion applies.
 	 */
 	function promoteUoFamilyContinuation( state, tonePlacement ) {
 		var i, firstToken, secondToken, nextState, result,
@@ -2258,11 +2425,11 @@
 	/**
 	 * Remove one vowel diacritic and append a literal suffix when escaping.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {number} target Token index.
 	 * @param {string|null} literal Literal suffix to append, if any.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object} Transform result.
+	 * @return {TransformResult} Transform result.
 	 */
 	function removeVowelDiacritic( state, target, literal, tonePlacement ) {
 		var nextState = cloneState( state );
@@ -2274,10 +2441,10 @@
 	/**
 	 * Remove both horns from a rendered ƯƠ-family pair during repeated-key escape.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string|null} literal Literal suffix to append, if any.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when the target is not ƯƠ-family.
+	 * @return {TransformResult|null} Transform result, or null when the target is not ƯƠ-family.
 	 */
 	function removeHornFromUo( state, literal, tonePlacement ) {
 		var target = resolveTonePlacement( state ),
@@ -2307,10 +2474,10 @@
 	/**
 	 * Apply a one-token vowel diacritic command to the primary target.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} command Semantic vowel-diacritic command.
+	 * @param {CompositionState} state Composition state.
+	 * @param {SemanticCommand} command Semantic vowel-diacritic command.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no simple target exists.
+	 * @return {TransformResult|null} Transform result, or null when no simple target exists.
 	 */
 	function applySimpleVowelDiacritic( state, command, tonePlacement ) {
 		var target = resolveVowelDiacriticTarget( state, command.vowelDiacritic );
@@ -2325,7 +2492,7 @@
 	/**
 	 * Check whether a token can switch between same-base vowel letters.
 	 *
-	 * @param {Object} token Composition token.
+	 * @param {CompositionToken} token Composition token.
 	 * @param {string} vowelDiacritic Requested VowelDiacritic enum value.
 	 * @return {boolean} True for supported switches such as `â <-> ă` and `ô <-> ơ`.
 	 */
@@ -2352,10 +2519,10 @@
 	/**
 	 * Switch the primary tone target between supported same-base vowel letters.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @param {string} vowelDiacritic Requested VowelDiacritic enum value.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no switch applies.
+	 * @return {TransformResult|null} Transform result, or null when no switch applies.
 	 */
 	function applySameBaseVowelDiacriticSwitch( state, vowelDiacritic, tonePlacement ) {
 		var nextState,
@@ -2382,10 +2549,10 @@
 	 * Repeated-key escape, family transitions, same-base switches, and simple
 	 * one-token application all pass through this dispatcher.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} command Semantic vowel-diacritic command.
+	 * @param {CompositionState} state Composition state.
+	 * @param {SemanticCommand} command Semantic vowel-diacritic command.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when the command cannot apply.
+	 * @return {TransformResult|null} Transform result, or null when the command cannot apply.
 	 */
 	function applyVowelDiacritic( state, command, tonePlacement ) {
 		var alternateTarget,
@@ -2442,7 +2609,7 @@
 	/**
 	 * Resolve the initial `d` token eligible for d-stroke transformation.
 	 *
-	 * @param {Object} state Composition state.
+	 * @param {CompositionState} state Composition state.
 	 * @return {number} Token index, or -1 when no d-stroke target exists.
 	 */
 	function resolveDStrokeTarget( state ) {
@@ -2471,10 +2638,10 @@
 	/**
 	 * Apply or repeated-key escape a semantic d-stroke command.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} command Semantic d-stroke command.
+	 * @param {CompositionState} state Composition state.
+	 * @param {SemanticCommand} command Semantic d-stroke command.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when no d-stroke target exists.
+	 * @return {TransformResult|null} Transform result, or null when no d-stroke target exists.
 	 */
 	function applyDStroke( state, command, tonePlacement ) {
 		var nextState,
@@ -2502,10 +2669,10 @@
 	/**
 	 * Dispatch a semantic command against a parsed candidate state.
 	 *
-	 * @param {Object} state Composition state.
-	 * @param {Object} command Shared semantic command.
+	 * @param {CompositionState} state Composition state.
+	 * @param {SemanticCommand} command Shared semantic command.
 	 * @param {string} [tonePlacement] Tone-placement policy.
-	 * @return {Object|null} Transform result, or null when the command cannot apply.
+	 * @return {TransformResult|null} Transform result, or null when the command cannot apply.
 	 */
 	function transformState( state, command, tonePlacement ) {
 		if ( state.status === Vietnamese.StateType.UNRECOGNIZED ) {
@@ -2538,10 +2705,10 @@
 		 * Transform a rendered candidate with a semantic Vietnamese command.
 		 *
 		 * @param {string} candidate Candidate text near the caret.
-		 * @param {Object} command Shared semantic command.
-		 * @param {Object} [options] Engine options.
+		 * @param {SemanticCommand} command Shared semantic command.
+		 * @param {EngineOptions} [options] Engine options.
 		 * @param {string} [options.tonePlacement] Tone-placement policy.
-		 * @return {Object} Result object with handled and output fields.
+		 * @return {EngineResult} Result object with handled and output fields.
 		 */
 		transformCandidate: function ( candidate, command, options ) {
 			var transformResult,
@@ -2569,9 +2736,9 @@
 		 * Re-render a candidate after ordinary letters extend it.
 		 *
 		 * @param {string} candidate Candidate text near the caret.
-		 * @param {Object} [options] Engine options.
+		 * @param {EngineOptions} [options] Engine options.
 		 * @param {string} [options.tonePlacement] Tone-placement policy.
-		 * @return {Object} Result object with handled and output fields.
+		 * @return {EngineResult} Result object with handled and output fields.
 		 */
 		reflowCandidate: function ( candidate, options ) {
 			var output, promotionResult,
@@ -2620,11 +2787,11 @@
 	/**
 	 * Create a jQuery.IME patterns function backed by a shared Vietnamese engine.
 	 *
-	 * @param {Object} options Adapter options.
+	 * @param {AdapterOptions} options Adapter options.
 	 * @param {Function} options.decodeCommand Input-method-specific command decoder.
 	 *  Decoders return either a shared semantic command or an adapter-level
 	 *  literal replacement for input-method escape keys.
-	 * @param {Object} [options.engine] Shared Vietnamese composition engine.
+	 * @param {VietnameseEngine} [options.engine] Shared Vietnamese composition engine.
 	 * @param {string} options.inputMethodId Input method id passed to the engine.
 	 * @param {string} [options.tonePlacement] Tone-placement policy.
 	 * @return {Function} jQuery.IME patterns function.
@@ -2730,8 +2897,8 @@
 	 * Create array-based shifted patterns that delegate back to an adapter.
 	 *
 	 * jQuery.IME gives array `patterns_shift` priority while Shift is pressed.
-	 * Vietnamese adapters use functional `patterns`, so VIQR-family shifted
-	 * punctuation needs this bridge to keep using the shared engine.
+	 * Vietnamese adapters use functional `patterns`, so shifted command keys
+	 * need this bridge to keep using the shared engine.
 	 *
 	 * @param {Function} adapter Functional Vietnamese patterns adapter.
 	 * @param {string[]} shiftedKeys Shifted command characters handled by adapter.
@@ -2744,7 +2911,7 @@
 			[
 				'[\\s\\S]*[' + shiftedKeyPattern + ']',
 				function ( input ) {
-					var result = adapter( input, '' );
+					var result = adapter( input, input.slice( -2 ) );
 
 					return result.noop ? input : result.output;
 				}
@@ -2756,7 +2923,7 @@
 	 * Register a Vietnamese input method that delegates composition to the
 	 * shared adapter and engine boundary.
 	 *
-	 * @param {Object} config Registration config.
+	 * @param {RegistrationConfig} config Registration config.
 	 * @param {string} config.id Input method id registered with jQuery.IME.
 	 * @param {string} config.name Human-readable input method name.
 	 * @param {string} config.description Input method description.
@@ -2823,13 +2990,15 @@
 		name: 'Telex',
 		description: 'Vietnamese Telex input method',
 		decodeCommand: decodeTelexCommand,
+		shiftedKeys: TELEX_SHIFTED_KEYS,
 		contextLength: TELEX_QUICK_CONTEXT_LENGTH
 	} );
 	registerInputMethod( {
 		id: 'vi-telex-simple',
 		name: 'Simple Telex',
 		description: 'Vietnamese Simple Telex input method',
-		decodeCommand: decodeSimpleTelexCommand
+		decodeCommand: decodeSimpleTelexCommand,
+		shiftedKeys: TELEX_SHIFTED_KEYS
 	} );
 	registerInputMethod( {
 		id: 'vi-vni',
@@ -2842,20 +3011,21 @@
 		name: 'VIQR',
 		description: 'Vietnamese VIQR input method',
 		decodeCommand: decodeVIQRCommand,
-		shiftedKeys: [ '?', '~', '^', '(', '+' ]
+		shiftedKeys: VIQR_SHIFTED_KEYS
 	} );
 	registerInputMethod( {
 		id: 'vi-viqr-star',
 		name: 'VIQR*',
 		description: 'Vietnamese VIQR* input method',
 		decodeCommand: decodeVIQRStarCommand,
-		shiftedKeys: [ '?', '~', '^', '(', '*' ]
+		shiftedKeys: VIQR_STAR_SHIFTED_KEYS
 	} );
 	registerInputMethod( {
 		id: 'vi-telex-reformed',
 		name: 'Telex (đặt dấu kiểu mới)',
 		description: 'Vietnamese Telex input method with reformed tone placement',
 		decodeCommand: decodeTelexCommand,
+		shiftedKeys: TELEX_SHIFTED_KEYS,
 		tonePlacement: Vietnamese.TonePlacement.REFORMED,
 		contextLength: TELEX_QUICK_CONTEXT_LENGTH
 	} );
@@ -2864,6 +3034,7 @@
 		name: 'Simple Telex (đặt dấu kiểu mới)',
 		description: 'Vietnamese Simple Telex input method with reformed tone placement',
 		decodeCommand: decodeSimpleTelexCommand,
+		shiftedKeys: TELEX_SHIFTED_KEYS,
 		tonePlacement: Vietnamese.TonePlacement.REFORMED
 	} );
 	registerInputMethod( {
@@ -2878,7 +3049,7 @@
 		name: 'VIQR (đặt dấu kiểu mới)',
 		description: 'Vietnamese VIQR input method with reformed tone placement',
 		decodeCommand: decodeVIQRCommand,
-		shiftedKeys: [ '?', '~', '^', '(', '+' ],
+		shiftedKeys: VIQR_SHIFTED_KEYS,
 		tonePlacement: Vietnamese.TonePlacement.REFORMED
 	} );
 	registerInputMethod( {
@@ -2886,7 +3057,7 @@
 		name: 'VIQR* (đặt dấu kiểu mới)',
 		description: 'Vietnamese VIQR* input method with reformed tone placement',
 		decodeCommand: decodeVIQRStarCommand,
-		shiftedKeys: [ '?', '~', '^', '(', '*' ],
+		shiftedKeys: VIQR_STAR_SHIFTED_KEYS,
 		tonePlacement: Vietnamese.TonePlacement.REFORMED
 	} );
 }( jQuery ) );
