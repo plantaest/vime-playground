@@ -125,6 +125,17 @@
 	 */
 
 	/**
+	 * @typedef {Object} AdapterResult
+	 * @property {boolean} noop Whether jQuery.IME should pass the latest key through.
+	 * @property {string} output Replacement output for jQuery.IME's input window.
+	 */
+
+	/**
+	 * @typedef {Function} Adapter
+	 * @property {Function} setCompositionBoundary Start an invisible composition boundary.
+	 */
+
+	/**
 	 * @typedef {Object} EngineOptions
 	 * @property {string} [context] Raw jQuery.IME key context.
 	 * @property {string} [inputMethodId] Input method id passed through by the adapter.
@@ -179,6 +190,19 @@
 	 * @property {VietnameseEngine} [engine] Shared Vietnamese composition engine.
 	 * @property {string} inputMethodId Input method id passed to the engine.
 	 * @property {string} [tonePlacement] Tone-placement policy.
+	 */
+
+	/**
+	 * @typedef {Object} CompositionBoundaryState
+	 * @property {string} suffix Rendered active suffix after the invisible boundary.
+	 * @property {string} beforeText Bounded rendered text before the caret after the last key.
+	 */
+
+	/**
+	 * @typedef {Object} ScopedInput
+	 * @property {string} prefix Frozen text before the active composition suffix.
+	 * @property {string} input Input window scoped to the active suffix and latest key.
+	 * @property {boolean} active Whether composition-boundary scoping is active.
 	 */
 
 	/**
@@ -2800,6 +2824,64 @@
 	// [14] jQuery.IME adapter and registration helpers
 
 	/**
+	 * Return the bounded text window jQuery.IME will see before the next key.
+	 *
+	 * @param {string} text Rendered text before the caret.
+	 * @return {string} Text bounded by the Vietnamese maxKeyLength.
+	 */
+	function getBoundedBeforeText( text ) {
+		return text.slice( -DEFAULT_MAX_KEY_LENGTH );
+	}
+
+	/**
+	 * Scope an input window to the suffix after an active composition boundary.
+	 *
+	 * The boundary state is deliberately self-invalidating: if the bounded text
+	 * before the latest key no longer matches the previous rendered state, the
+	 * caller should clear it and process the full input normally.
+	 *
+	 * @param {CompositionBoundaryState|null} boundaryState Current boundary state.
+	 * @param {string} input jQuery.IME input window ending with the latest key.
+	 * @return {ScopedInput} Scoped input descriptor.
+	 */
+	function scopeInputToCompositionBoundary( boundaryState, input ) {
+		var latestKey = input.slice( -1 ),
+			beforeKey = input.slice( 0, -latestKey.length ),
+			prefix;
+
+		if ( !boundaryState || beforeKey !== boundaryState.beforeText ) {
+			return {
+				active: false,
+				input: input,
+				prefix: ''
+			};
+		}
+
+		if ( !boundaryState.suffix ) {
+			return {
+				active: true,
+				input: latestKey,
+				prefix: beforeKey
+			};
+		}
+
+		if ( beforeKey.slice( -boundaryState.suffix.length ) !== boundaryState.suffix ) {
+			return {
+				active: false,
+				input: input,
+				prefix: ''
+			};
+		}
+
+		prefix = beforeKey.slice( 0, beforeKey.length - boundaryState.suffix.length );
+		return {
+			active: true,
+			input: boundaryState.suffix + latestKey,
+			prefix: prefix
+		};
+	}
+
+	/**
 	 * Create a jQuery.IME patterns function backed by a shared Vietnamese engine.
 	 *
 	 * @param {AdapterOptions} options Adapter options.
@@ -2809,15 +2891,27 @@
 	 * @param {VietnameseEngine} [options.engine] Shared Vietnamese composition engine.
 	 * @param {string} options.inputMethodId Input method id passed to the engine.
 	 * @param {string} [options.tonePlacement] Tone-placement policy.
-	 * @return {Function} jQuery.IME patterns function.
+	 * @return {Adapter} jQuery.IME patterns function.
 	 */
 	function createAdapter( options ) {
 		var decodeCommand = options.decodeCommand,
 			adapterEngine = options.engine || engine,
 			inputMethodId = options.inputMethodId,
-			tonePlacement = normalizeTonePlacement( options.tonePlacement );
+			tonePlacement = normalizeTonePlacement( options.tonePlacement ),
+			boundaryState = null;
 
-		return function ( input, context ) {
+		/**
+		 * Process one jQuery.IME input window without composition-boundary scoping.
+		 *
+		 * This is the core adapter path: decode the latest key into a semantic
+		 * command, extract the editable Vietnamese candidate, then ask the shared
+		 * engine to transform or reflow that candidate.
+		 *
+		 * @param {string} input jQuery.IME input window ending with the latest key.
+		 * @param {string} context Raw jQuery.IME key context.
+		 * @return {AdapterResult} jQuery.IME transliteration result.
+		 */
+		function processInput( input, context ) {
 			var decoded = decodeCommand( input, context, {
 					inputMethodId: inputMethodId,
 					tonePlacement: tonePlacement
@@ -2891,7 +2985,92 @@
 				noop: false,
 				output: extracted.prefix + result.output
 			};
-		};
+		}
+
+		/**
+		 * Clear the active invisible composition boundary.
+		 *
+		 * This is used when the next input window no longer matches the bounded
+		 * boundary state, or when a non-candidate key should end the boundary.
+		 */
+		function clearCompositionBoundary() {
+			boundaryState = null;
+		}
+
+		/**
+		 * Start an invisible composition boundary at the current rendered text.
+		 *
+		 * The stored text is bounded to match jQuery.IME's `maxKeyLength` window.
+		 * Later adapter calls can therefore verify whether the same pre-key text
+		 * is still visible before scoping transforms to the suffix after this point.
+		 *
+		 * @param {string} beforeText Rendered text before the caret when Shift+Space is pressed.
+		 */
+		function setCompositionBoundary( beforeText ) {
+			boundaryState = {
+				beforeText: getBoundedBeforeText( beforeText ),
+				suffix: ''
+			};
+		}
+
+		/**
+		 * Refresh the active composition-boundary state after a handled or literal key.
+		 *
+		 * @param {ScopedInput} scoped Scoped input descriptor for the current key.
+		 * @param {string} suffix Rendered suffix after the boundary.
+		 */
+		function updateCompositionBoundary( scoped, suffix ) {
+			boundaryState = {
+				beforeText: getBoundedBeforeText( scoped.prefix + suffix ),
+				suffix: suffix
+			};
+		}
+
+		/**
+		 * jQuery.IME patterns entry point for a Vietnamese input method.
+		 *
+		 * Without an active boundary, this delegates directly to `processInput`.
+		 * With an active boundary, it scopes processing to the suffix after the
+		 * boundary, then reattaches the frozen prefix to the returned output.
+		 *
+		 * @param {string} input jQuery.IME input window ending with the latest key.
+		 * @param {string} context Raw jQuery.IME key context.
+		 * @return {AdapterResult} jQuery.IME transliteration result.
+		 */
+		function adapter( input, context ) {
+			var scoped = scopeInputToCompositionBoundary( boundaryState, input ),
+				result, latestKey;
+
+			if ( boundaryState && !scoped.active ) {
+				clearCompositionBoundary();
+			}
+
+			result = processInput( scoped.input, context );
+
+			if ( !scoped.active ) {
+				return result;
+			}
+
+			if ( result.noop ) {
+				latestKey = scoped.input.slice( -1 );
+				if ( isCandidateCodeUnit( latestKey ) ) {
+					updateCompositionBoundary( scoped, scoped.input );
+				} else {
+					clearCompositionBoundary();
+				}
+
+				return passThrough( input );
+			}
+
+			updateCompositionBoundary( scoped, result.output );
+			return {
+				noop: false,
+				output: scoped.prefix + result.output
+			};
+		}
+
+		adapter.setCompositionBoundary = setCompositionBoundary;
+		return adapter;
 	}
 
 	/**
@@ -2915,14 +3094,28 @@
 	 * Vietnamese adapters use functional `patterns`, so shifted command keys
 	 * need this bridge to keep using the shared engine.
 	 *
-	 * @param {Function} adapter Functional Vietnamese patterns adapter.
+	 * @param {Adapter} adapter Functional Vietnamese patterns adapter.
 	 * @param {string[]} shiftedKeys Shifted command characters handled by adapter.
 	 * @return {Array[]} jQuery.IME array rules for `patterns_shift`.
 	 */
 	function createShiftedAdapterPatterns( adapter, shiftedKeys ) {
-		var shiftedKeyPattern = shiftedKeys.map( escapeRegexClassCharacter ).join( '' );
+		var patterns = [
+				[
+					'([\\s\\S]*) ',
+					function ( input, beforeSpace ) {
+						adapter.setCompositionBoundary( beforeSpace );
+						return beforeSpace;
+					}
+				]
+			],
+			shiftedKeyPattern;
 
-		return [
+		if ( !shiftedKeys || !shiftedKeys.length ) {
+			return patterns;
+		}
+
+		shiftedKeyPattern = shiftedKeys.map( escapeRegexClassCharacter ).join( '' );
+		patterns.push(
 			[
 				'[\\s\\S]*[' + shiftedKeyPattern + ']',
 				function ( input ) {
@@ -2931,7 +3124,9 @@
 					return result.noop ? input : result.output;
 				}
 			]
-		];
+		);
+
+		return patterns;
 	}
 
 	/**
@@ -2971,9 +3166,10 @@
 				patterns: adapter
 			};
 
-		if ( config.shiftedKeys && config.shiftedKeys.length ) {
-			inputMethod.patterns_shift = createShiftedAdapterPatterns( adapter, config.shiftedKeys );
-		}
+		inputMethod.patterns_shift = createShiftedAdapterPatterns(
+			adapter,
+			config.shiftedKeys || []
+		);
 
 		$.ime.register( inputMethod );
 	}
