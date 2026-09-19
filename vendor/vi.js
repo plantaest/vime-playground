@@ -361,21 +361,6 @@
 	}
 
 	/**
-	 * Build a d-stroke command that cannot escape back to literal input.
-	 *
-	 * @param {string} key Input-method command key.
-	 * @return {DecodedCommand} Decoded semantic command.
-	 */
-	function createOneWayDStrokeCommand( key ) {
-		return {
-			key: key,
-			command: {
-				type: Vietnamese.CommandType.APPLY_D_STROKE
-			}
-		};
-	}
-
-	/**
 	 * Build an adapter-level literal replacement that bypasses engine transform.
 	 *
 	 * @param {string} key Input-method command key.
@@ -524,7 +509,9 @@
 		}
 
 		return state.status !== Vietnamese.StateType.UNRECOGNIZED &&
-			state.structure.vowels.indices.length === 0;
+			state.structure.vowels.indices.length === 0 &&
+			// In `qu`, the `u` belongs to the onset and should not trigger quick `w`.
+			state.structure.onset.toLowerCase() !== 'qu';
 	}
 
 	/**
@@ -745,7 +732,7 @@
 		}
 
 		if ( key === 'd' || key === 'D' ) {
-			return createOneWayDStrokeCommand( key );
+			return createDStrokeCommand( key );
 		}
 
 		if ( toneCommands[ key ] ) {
@@ -1375,6 +1362,26 @@
 	}
 
 	/**
+	 * Check whether the written `u` after `q` starts a recognized `uy...` rime.
+	 *
+	 * Most `qu` spellings treat the `u` as onset material, but forms such as
+	 * `quynh` need the same `uynh` rime analysis as `huynh`.
+	 *
+	 * @param {string} lowerText Lowercase candidate text.
+	 * @return {boolean} True if `q` should be the onset and `u` should remain in the rime.
+	 */
+	function shouldKeepQuUInRime( lowerText ) {
+		var rimeStatus;
+
+		if ( lowerText.indexOf( 'quy' ) !== 0 ) {
+			return false;
+		}
+
+		rimeStatus = recognizeRime( lowerText.slice( 1 ) ).status;
+		return rimeStatus !== Vietnamese.RimeStatus.INVALID;
+	}
+
+	/**
 	 * Check whether text is a prefix of any supported Vietnamese onset.
 	 *
 	 * Onset prefixes are accepted as intermediate states while users are still
@@ -1407,6 +1414,14 @@
 	 */
 	function resolveOnset( state, lowerText ) {
 		var i;
+
+		if ( shouldKeepQuUInRime( lowerText ) ) {
+			return {
+				end: 1,
+				ignoredVowelIndices: {},
+				text: 'q'
+			};
+		}
 
 		if ( lowerText.indexOf( 'qu' ) === 0 ) {
 			return {
