@@ -1397,7 +1397,7 @@
 	function shouldKeepQuUInRime( lowerText ) {
 		var rimeStatus;
 
-		if ( lowerText.indexOf( 'quy' ) !== 0 ) {
+		if ( lowerText.indexOf( 'quy' ) !== 0 || lowerText === 'quy' ) {
 			return false;
 		}
 
